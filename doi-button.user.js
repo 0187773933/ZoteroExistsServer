@@ -24,6 +24,7 @@
 // @match        *://80.82.77.83/*
 // @match        *://AJHPContents.com/*
 // @match        *://aaas.org/*
+// @match        *://direct.mit.edu/netn/article/*
 // @match        *://aacrmeetingabstracts.org/*
 // @match        *://aaiddjournals.org/*
 // @match        *://aanda.org/*
@@ -391,10 +392,19 @@
 // @match        *://lj.uwpress.org/*
 // @match        *://mansci.journal.informs.org/*
 // @match        *://mapress.com/*
+// @match        *://*.medrxiv.org/*
+// @match        *://karger.com/*
+// @match        *://journals.lww.com/*
+// @match        *://elifesciences.org/*
+// @match        *://www.taylorfrancis.com/*
+// @match        *://www.researchsquare.com/article/*
+// @match        *://theses.hal.science/*
 // @match        *://math.ualberta.ca/*
 // @match        *://mcponline.org/*
 // @match        *://mcr.aacrjournals.org/*
 // @match        *://mcr.sagepub.com/*
+// @match        *://open.library.ubc.ca/*
+// @match        *://psycnet.apa.org/*
 // @match        *://mend.endojournals.org/*
 // @match        *://metapress.com/*
 // @match        *://metla.fi/*
@@ -594,6 +604,8 @@
 // @match        *://turf.lib.msu.edu/*
 // @match        *://turpion.org/*
 // @match        *://tvnews.vanderbilt.edu/*
+// @match        *://proceedings.mlr.press/*
+// @match        *://ojs.aaai.org/*
 // @match        *://uark.edu/*
 // @match        *://uli.org/*
 // @match        *://ulrichsweb.com/*
@@ -1880,7 +1892,45 @@ if (location.hostname.includes("webofscience")) {
     return;
 }
 
+function addZoteroFloatBox(exists){
 
+    let offset = 100;
+    //if ( isIEEE() ) offset = 250;
+
+    let box = document.getElementById('zoteroExistsBox');
+
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'zoteroExistsBox';
+
+        box.style.position = 'fixed';
+        box.style.left = '200px';
+        box.style.zIndex = '999999';
+        box.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+        box.style.pointerEvents = 'none'; // prevents site interference
+
+        document.body.appendChild(box);
+    }
+
+    box.style.top = offset + 'px';
+
+    const color = exists ? "#22c55e" : "#ff9800";
+    const text  = exists ? "Zotero ✓" : "Not in Zotero";
+
+    box.innerHTML = `
+        <div style="
+            background:${color};
+            color:white;
+            padding:8px 14px;
+            border-radius:8px;
+            font-weight:600;
+            font-size:14px;
+            box-shadow:0 6px 18px rgba(0,0,0,.25);
+        ">
+            ${text}
+        </div>
+    `;
+}
 
 /* ---------------- CONFIG ---------------- */
 
@@ -1939,13 +1989,12 @@ function createBadge(exists){
 }
 
 function attachBadge(target,exists){
-
   if(!target) return;
 
   removeBadge();
 
   const badge=createBadge(exists);
-
+  console.log( badge );
   target.after(badge);
   currentBadge=badge;
 }
@@ -2043,6 +2092,7 @@ async function evaluate(){
   const elements=findTitleElements(title);
   console.log("MATCHES:",elements.length);
   console.log( elements );
+  console.log( title );
   try{
     const r=await askServer(title);
     const exists=r?.results?.[0]?.exists===true;
@@ -2057,7 +2107,8 @@ async function evaluate(){
     // apply persistent attribute
     for(const el of elements){
       if (location.hostname.includes("sciencedirect.com")) {
-          attachBadge(el, exists);
+          //attachBadge(el, exists);
+          addZoteroFloatBox(exists);
       } else {
           el.setAttribute("data-zotero-exists", exists ? "true":"false");
       }
