@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         DOI Button
 // @namespace    asdf
-// @version      0.11
+// @version      0.12
 // @description  Adds DOI Buttons
 // @author       asdf
-// @updateURL    https://39363.org/NOTES/WSU/MISC/DOI-BUTTON.user.js
-// @downloadURL  https://39363.org/NOTES/WSU/MISC/DOI-BUTTON.user.js
+// @updateURL    https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/doi-button.user.js
+// @downloadURL  https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/doi-button.user.js
 // @grant        GM.xmlHttpRequest
 // @connect      127.0.0.1
 

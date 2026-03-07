@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         Zotero Saved + Visited Highlighter (Scholar + Web of Science + PubMed)
 // @namespace    local.zotero.multi
-// @version      0.1.1
+// @version      0.1.2
 // @description  Highlight items already saved in Zotero AND highlight WOS items you have clicked (persists across refreshes)
+// @updateURL    https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/ZES.user.js
+// @downloadURL  https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/ZES.user.js
 // @match        https://scholar.google.com/*
 // @match        https://scholar.google.com/scholar_labs/search/session/*
 // @match        *://www-webofscience-com.ezproxy.libraries.wright.edu/wos/woscc/summary/*
