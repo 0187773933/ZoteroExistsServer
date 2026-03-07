@@ -148,7 +148,7 @@
 
 			let title = h.innerText.trim();
 			if (!title) return;
-			title = title.replace(/^\[PDF\]\s*/, "");
+			title = title.replace(/^\[[^\]]+\]\s*/, "");
 			const doi = extractDOIFromText(card.innerText || "");
 
 			items.push({
