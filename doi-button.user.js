@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DOI Button
 // @namespace    asdf
-// @version      0.13
+// @version      0.14
 // @description  Adds DOI Buttons
 // @author       asdf
 // @updateURL    https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/doi-button.user.js
@@ -1897,7 +1897,7 @@ if (location.hostname.includes("pubmed")) {
     return;
 }
 
-if (location.hostname.includes("webofscience")) {
+if (location.hostname.includes("webofscience") && location.hostname.includes("summary")) {
     return;
 }
 
@@ -2048,6 +2048,7 @@ function visible(el){
 
 function detectTitle(){
 
+  /* 1. Try metadata first */
   const meta =
     document.querySelector('meta[name="citation_title"]') ||
     document.querySelector('meta[property="og:title"]') ||
@@ -2055,9 +2056,59 @@ function detectTitle(){
 
   if(meta?.content) return meta.content.trim();
 
-  const h1=document.querySelector("h1");
-  if(h1 && h1.innerText.length>10) return h1.innerText.trim();
 
+  /* 2. Check standard headings */
+  const headingSelectors = "h1,h2,h3,h4,h5,h6,[role='heading']";
+  const headings = Array.from(document.querySelectorAll(headingSelectors));
+
+  if(headings.length){
+    const best = headings
+      .map(el=>{
+        const style = getComputedStyle(el);
+        const size = parseFloat(style.fontSize) || 0;
+        const text = el.innerText.trim();
+
+        if(text.length < 8) return null;
+
+        return {
+          el,
+          text,
+          score: size * Math.log(text.length + 1)
+        };
+      })
+      .filter(Boolean)
+      .sort((a,b)=>b.score-a.score)[0];
+
+    if(best) return best.text;
+  }
+
+
+  /* 3. Fallback: scan top visible elements */
+  const candidates = Array.from(document.querySelectorAll("body *"))
+    .slice(0,150); // only early DOM elements
+
+  let best = null;
+
+  for(const el of candidates){
+
+    const text = el.innerText?.trim();
+    if(!text || text.length < 10 || text.length > 200) continue;
+
+    const style = getComputedStyle(el);
+    const size = parseFloat(style.fontSize) || 0;
+
+    if(size < 18) continue; // ignore normal paragraph text
+
+    const score = size * Math.log(text.length + 1);
+
+    if(!best || score > best.score){
+      best = {text,score};
+    }
+  }
+
+  if(best) return best.text;
+
+  /* 4. final fallback */
   return document.title.trim();
 }
 
