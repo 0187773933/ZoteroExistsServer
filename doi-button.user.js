@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DOI Button
 // @namespace    asdf
-// @version      0.12
+// @version      0.13
 // @description  Adds DOI Buttons
 // @author       asdf
 // @updateURL    https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/doi-button.user.js
@@ -95,6 +95,7 @@
 // @match        *://archopht.ama-assn.org/*
 // @match        *://archpsyc.ama-assn.org/*
 // @match        *://archsurg.ama-assn.org/*
+// @match        *://publish.kne-publishing.com/*
 // @match        *://arjournals.annualreviews.org/*
 // @match        *://artstor.org/*
 // @match        *://asadl.org/*
@@ -340,6 +341,7 @@
 // @match        *://jn.nutrition.org/*
 // @match        *://jn.physiology.org/*
 // @match        *://jneurosci.org/*
+// @match        *://*.jneurosci.org/*
 // @match        *://jnm.snmjournals.org/*
 // @match        *://jnnp.bmj.com/*
 // @match        *://jnrlse.org/*
@@ -809,7 +811,14 @@
 // @match        https://zhuanlan.zhihu.com/p/*
 // ==/UserScript==
 
-var sciHubBaseUrl = 'https://sci-hub.st/'; // Set sci-hub url
+var sciHubBaseUrl = 'https://sci-hub.su/'; // Set sci-hub url
+
+//mk
+//sg
+//su
+//st
+//red
+//box
 
 // http://sci-hub.ee 0.02s
 // https://sci-hub.ee 0.03s
