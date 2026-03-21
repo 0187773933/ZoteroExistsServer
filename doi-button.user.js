@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DOI Button
 // @namespace    asdf
-// @version      0.14
+// @version      0.15
 // @description  Adds DOI Buttons
 // @author       asdf
 // @updateURL    https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/doi-button.user.js
@@ -81,6 +81,10 @@
 // @match        *://annualreviews.org/*
 // @match        *://anthrosource.net/*
 // @match        *://apex.ipap.jp/*
+// @match        *://aclanthology.org/*
+// @match        *://ui.adsabs.harvard.edu/*
+// @match        *://escholarship.org/*
+// @match        *://openaccess.thecvf.com/*
 // @match        *://apidologie.org/*
 // @match        *://app.harpweek.com/*
 // @match        *://appliedradiology.com/*
@@ -101,6 +105,7 @@
 // @match        *://asadl.org/*
 // @match        *://asae.frymulti.com/*
 // @match        *://ascelibrary.org/*
+// @match        *://*.annualreviews.org/*
 // @match        *://asianannals.ctsnetjournals.org/*
 // @match        *://aslo.org/*
 // @match        *://aspet.org/*
@@ -116,6 +121,7 @@
 // @match        *://biochemsoctrans.org/*
 // @match        *://biol.uni.wroc.pl/*
 // @match        *://biolbull.org/*
+// @match        *://medscimonit.com/*
 // @match        *://biolreprod.org/*
 // @match        *://bioone.org/*
 // @match        *://www.biologicalpsychiatryjournal.com/*
@@ -232,6 +238,8 @@
 // @match        *://evolutionary-ecology.com/*
 // @match        *://exacteditions.com/*
 // @match        *://extensionreport.osu.edu/*
+// @match        *://www.igi-global.com/*
+// @match        *://proceedings.neurips.cc/*
 // @match        *://facs.org/*
 // @match        *://familiesinsociety.org/*
 // @match        *://fao.org/*
@@ -605,6 +613,7 @@
 // @match        *://trb.org/*
 // @match        *://turf.lib.msu.edu/*
 // @match        *://turpion.org/*
+// @match        *://*.neurology.org/*
 // @match        *://tvnews.vanderbilt.edu/*
 // @match        *://proceedings.mlr.press/*
 // @match        *://ojs.aaai.org/*
