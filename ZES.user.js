@@ -1,15 +1,19 @@
 // ==UserScript==
-// @name         Zotero Saved + Visited Highlighter (Scholar + Web of Science + PubMed)
+// @name         Zotero Saved + Visited Highlighter (Multi-Site)
 // @namespace    local.zotero.multi
-// @version      0.1.2
-// @description  Highlight items already saved in Zotero AND highlight WOS items you have clicked (persists across refreshes)
-// @updateURL    https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/ZES.user.js
-// @downloadURL  https://github.com/0187773933/ZoteroExistsServer/raw/refs/heads/master/ZES.user.js
+// @version      0.2.1
+// @description  Highlight Zotero-saved items + track visited WOS (SPA-safe)
 // @match        https://scholar.google.com/*
 // @match        https://scholar.google.com/scholar_labs/search/session/*
 // @match        *://www-webofscience-com.ezproxy.libraries.wright.edu/wos/woscc/summary/*
 // @match        https://pubmed.ncbi.nlm.nih.gov/*
 // @match        https://arxiv.org/search/advanced?*
+// @match        https://www.sciencedirect.com/search?*
+// @match        https://www-sciencedirect-com.ezproxy.libraries.wright.edu/search?*
+// @match        https://link.springer.com/search?*
+// @match        https://link-springer-com.ezproxy.libraries.wright.edu/search?*
+// @match        https://ieeexplore-ieee-org.ezproxy.libraries.wright.edu/search*
+// @match        https://ieeexplore.ieee.org/search*
 // @grant        GM.xmlHttpRequest
 // @connect      127.0.0.1
 // ==/UserScript==
@@ -17,282 +21,292 @@
 (() => {
 	"use strict";
 
-	console.warn("ZOTERO+VISITED HIGHLIGHTER LOADED", location.href);
+	console.warn("ZOTERO HIGHLIGHTER LOADED", location.href);
 
+	/* =========================
+	 * CONFIG
+	 * ========================= */
 	const API = "http://127.0.0.1:9371/exists";
 	const ZOTERO_COLOR = "#22c55e";
 
 	const WOS_VISITED_KEY = "wosVisitedRecords_v1";
 	const WOS_VISITED_OUTLINE = "2px solid #7c3aed";
 
+	const SCAN_INTERVAL = 700;
+	const SCAN_DURATION = 30000;
+
 	/* =========================
-	 * HTTP helper
+	 * HTTP
 	 * ========================= */
 	const httpRequest =
-		(typeof GM !== "undefined" && GM.xmlHttpRequest) ?
-		GM.xmlHttpRequest :
-		(typeof GM_xmlhttpRequest !== "undefined" ? GM_xmlhttpRequest : null);
+		(typeof GM !== "undefined" && GM.xmlHttpRequest) ||
+		(typeof GM_xmlhttpRequest !== "undefined" && GM_xmlhttpRequest);
 
 	if (!httpRequest) {
 		console.error("No GM HTTP API available");
 		return;
 	}
 
-	function postJSON(url, data) {
-		return new Promise((resolve, reject) => {
+	const postJSON = (url, data) =>
+		new Promise((resolve, reject) => {
 			httpRequest({
 				method: "POST",
 				url,
-				headers: {
-					"Content-Type": "application/json"
-				},
+				headers: { "Content-Type": "application/json" },
 				data: JSON.stringify(data),
-				onload: res => {
-					try {
-						resolve(JSON.parse(res.responseText));
-					} catch (e) {
-						reject(e);
-					}
+				onload: r => {
+					try { resolve(JSON.parse(r.responseText)); }
+					catch (e) { reject(e); }
 				},
-				onerror: reject,
+				onerror: reject
 			});
 		});
-	}
 
 	/* =========================
-	 * Cache + pending state
+	 * STATE
 	 * ========================= */
-	const zoteroCache = new Map(); // known answers
-	const zoteroPending = new Set(); // in-flight queries
+	const zoteroCache = new Map();
+	const zoteroPending = new Set();
+	const seenNodes = new WeakSet();
 
-	function normalizeTitle(t) {
-		if (!t) return "";
-		return t.toLowerCase()
+	/* =========================
+	 * UTIL
+	 * ========================= */
+	const normalizeTitle = t =>
+		(t || "")
+			.toLowerCase()
 			.normalize("NFKD")
 			.replace(/[\u2010-\u2015]/g, "-")
 			.replace(/[.:;!?]+$/g, "")
 			.replace(/[^\p{L}\p{N}]+/gu, " ")
 			.replace(/\s+/g, " ")
 			.trim();
-	}
 
-	function cacheKey({
-		doi,
-		title
-	}) {
-		if (doi) return `doi:${doi.toLowerCase()}`;
-		return `title:${normalizeTitle(title)}`;
-	}
+	const cacheKey = ({ doi, title }) =>
+		doi ? `doi:${doi.toLowerCase()}` : `title:${normalizeTitle(title)}`;
 
-	/* =========================
-	 * WOS visited storage
-	 * ========================= */
-	function getVisitedWOS() {
-		try {
-			return new Set(JSON.parse(localStorage.getItem(WOS_VISITED_KEY) || "[]"));
-		} catch {
-			return new Set();
-		}
-	}
+	const extractDOI = text =>
+		(text || "").match(/10\.\d{4,9}\/[^\s"<>]+/i)?.[0] || null;
 
-	function saveVisitedWOS(set) {
-		localStorage.setItem(WOS_VISITED_KEY, JSON.stringify([...set]));
-	}
-	const visitedWOS = getVisitedWOS();
+	const isStableTitle = t =>
+		t && t.length > 10 && !t.endsWith("…");
 
-	function extractWOSIDFromURL(url) {
-		const m = (url || "").match(/WOS:\w+/);
-		return m ? m[0] : null;
-	}
-
-	function markVisitedWOS(id) {
-		if (!id || visitedWOS.has(id)) return;
-		visitedWOS.add(id);
-		saveVisitedWOS(visitedWOS);
-	}
+	const isNewNode = node => {
+		if (seenNodes.has(node)) return false;
+		seenNodes.add(node);
+		return true;
+	};
 
 	/* =========================
-	 * Helpers
+	 * HIGHLIGHT
 	 * ========================= */
-	function extractDOIFromText(text) {
-		const m = (text || "").match(/10\.\d{4,9}\/[^\s"<>]+/i);
-		return m ? m[0] : null;
-	}
-
-	function isStableTitle(title) {
-		return title && title.length > 10 && !title.endsWith("…");
-	}
-
-	function highlightZotero(node) {
+	const highlightZotero = node => {
 		node.style.background = ZOTERO_COLOR;
 		node.style.padding = "2px 4px";
 		node.style.borderRadius = "4px";
 		node.title = "Already in Zotero";
-		console.log(node);
-	}
+	};
 
-	function highlightVisitedWOS(node) {
+	const highlightVisitedWOS = node => {
 		node.style.outline = WOS_VISITED_OUTLINE;
 		node.style.outlineOffset = "2px";
 		node.style.opacity = "0.65";
-		const prev = node.title ? node.title + " | " : "";
-		node.title = prev + "Previously opened";
-	}
+		node.title = (node.title ? node.title + " | " : "") + "Previously opened";
+	};
 
 	/* =========================
-	 * Site collectors
+	 * WOS VISITED
 	 * ========================= */
-	function collectScholarItems() {
-		const items = [];
-		document.querySelectorAll("div.gs_r").forEach((card, idx) => {
+	const getVisitedWOS = () => {
+		try { return new Set(JSON.parse(localStorage.getItem(WOS_VISITED_KEY) || "[]")); }
+		catch { return new Set(); }
+	};
+
+	const saveVisitedWOS = set =>
+		localStorage.setItem(WOS_VISITED_KEY, JSON.stringify([...set]));
+
+	const visitedWOS = getVisitedWOS();
+
+	const extractWOSID = url =>
+		(url || "").match(/WOS:\w+/)?.[0] || null;
+
+	const markVisitedWOS = id => {
+		if (!id || visitedWOS.has(id)) return;
+		visitedWOS.add(id);
+		saveVisitedWOS(visitedWOS);
+	};
+
+	const installWOSClickCapture = () => {
+		if (!location.hostname.includes("webofscience")) return;
+
+		document.addEventListener("click", e => {
+			const a = e.target.closest?.('a[href*="/full-record/"]');
+			const id = extractWOSID(a?.href);
+			if (id) markVisitedWOS(id);
+		}, true);
+	};
+
+	/* =========================
+	 * COLLECTORS
+	 * ========================= */
+	const collect = (selector, mapFn) =>
+		[...document.querySelectorAll(selector)].map(mapFn).filter(Boolean);
+
+	const collectScholar = () =>
+		collect("div.gs_r", (card, i) => {
 			const h = card.querySelector("h3.gs_rt");
-			if (!h) return;
+			if (!h || !isNewNode(h)) return;
 
-			let title = h.innerText.trim();
+			let title = h.innerText.trim().replace(/^\[[^\]]+\]\s*/, "");
 			if (!title) return;
-			title = title.replace(/^\[[^\]]+\]\s*/, "");
-			const doi = extractDOIFromText(card.innerText || "");
 
-			items.push({
-				id: `gs-${idx}`,
+			const doi = extractDOI(card.innerText);
+
+			return {
+				id: `gs-${i}`,
 				node: h,
 				title,
 				doi,
-				key: cacheKey({
-					title,
-					doi
-				}),
-				wosid: null,
-			});
+				key: cacheKey({ title, doi })
+			};
 		});
-		return items;
-	}
 
-	function collectWebOfScienceItems() {
-		const items = [];
-		document.querySelectorAll('a[data-ta="summary-record-title-link"]').forEach((a, idx) => {
+	const collectWOS = () =>
+		collect('a[data-ta="summary-record-title-link"]', (a, i) => {
+			if (!isNewNode(a)) return;
+
 			const title = a.innerText.trim();
 			if (!title) return;
 
-			const record = a.closest("app-summary-title")?.parentElement || a.parentElement;
-			const doi = extractDOIFromText(record?.innerText || "");
-			const wosid = extractWOSIDFromURL(a.href);
+			const doi = extractDOI(a.closest("app-summary-title")?.innerText);
+			const wosid = extractWOSID(a.href);
 
-			items.push({
-				id: `wos-${idx}`,
+			return {
+				id: `wos-${i}`,
 				node: a,
 				title,
 				doi,
-				key: cacheKey({
-					title,
-					doi
-				}),
-				wosid,
-			});
-		});
-		return items;
-	}
-
-	function collectArxivItems() {
-		const items = [];
-
-		document.querySelectorAll("li.arxiv-result").forEach((li, idx) => {
-
-			// stable title selector (works across all arxiv layouts)
-			const titleNode = li.querySelector("p.title");
-			if (!titleNode) return;
-
-			// normalize whitespace + remove weird line wraps
-			const title = titleNode.innerText
-				.replace(/\s+/g, " ")
-				.replace(/\u200B/g, "") // zero width space
-				.trim();
-
-			if (!isStableTitle(title)) return;
-
-			// arxiv id (always exists)
-			const absLink = li.querySelector('.list-title a[href*="/abs/"]');
-			const arxivID = absLink?.href?.match(/\/abs\/([^?#]+)/)?.[1] || null;
-
-			// DOI occasionally embedded in comments / abstract
-			const doi = extractDOIFromText(li.innerText || "");
-
-			// unique key MUST prioritize arxiv id or infinite scroll duplicates happen
-			const key = arxivID ?
-				`arxiv:${arxivID}` :
-				cacheKey({
-					title,
-					doi
-				});
-
-			let x = {
-				id: `arxiv-${arxivID || idx}`,
-				node: titleNode,
-				title,
-				doi,
-				key,
-				wosid: null
+				key: cacheKey({ title, doi }),
+				wosid
 			};
-			console.log(x);
-			items.push(x);
-
 		});
 
-		return items;
-	}
+	const collectPubMed = () =>
+		collect("a.docsum-title", (a, i) => {
+			if (!isNewNode(a)) return;
 
-
-	function collectPubMedItems() {
-		const items = [];
-		document.querySelectorAll("a.docsum-title").forEach((a, idx) => {
 			const title = a.innerText.replace(/\s+/g, " ").trim();
 			if (!isStableTitle(title)) return;
 
-			const pmid = a.getAttribute("data-article-id") ||
-				(a.href.match(/\/(\d+)\//)?.[1] || null);
-
-			items.push({
-				id: `pm-${pmid || idx}`,
+			return {
+				id: `pm-${i}`,
 				node: a,
 				title,
 				doi: null,
-				key: cacheKey({
-					title
-				}),
-				wosid: null,
-			});
+				key: cacheKey({ title })
+			};
 		});
-		return items;
-	}
 
-	function collectItemsBySite() {
+	const collectArxiv = () =>
+		collect("li.arxiv-result", (li, i) => {
+			const node = li.querySelector("p.title");
+			if (!node || !isNewNode(node)) return;
+
+			const title = node.innerText.replace(/\s+/g, " ").trim();
+			if (!isStableTitle(title)) return;
+
+			const id = li.querySelector('a[href*="/abs/"]')?.href.match(/\/abs\/([^?#]+)/)?.[1];
+			const doi = extractDOI(li.innerText);
+
+			return {
+				id: `arxiv-${id || i}`,
+				node,
+				title,
+				doi,
+				key: id ? `arxiv:${id}` : cacheKey({ title, doi })
+			};
+		});
+
+	const collectScienceDirect = () =>
+		collect('a[href*="/science/article/pii/"]', (a, i) => {
+			if (!isNewNode(a)) return;
+
+			const title = a.innerText.replace(/\s+/g, " ").trim();
+			if (!isStableTitle(title)) return;
+
+			const doi = extractDOI(a.closest("li, div")?.innerText);
+
+			return {
+				id: `sd-${i}`,
+				node: a,
+				title,
+				doi,
+				key: cacheKey({ title, doi })
+			};
+		});
+
+	const collectSpringer = () =>
+		collect("a.app-card-open__link", (a, i) => {
+			if (!isNewNode(a)) return;
+
+			const title = a.innerText.replace(/\s+/g, " ").trim();
+			if (!isStableTitle(title)) return;
+
+			const doi = extractDOI(a.closest("li, div, section")?.innerText);
+
+			return {
+				id: `springer-${i}`,
+				node: a,
+				title,
+				doi,
+				key: cacheKey({ title, doi })
+			};
+		});
+
+	const collectIEEE = () =>
+		collect("h3.text-md-md-lh a", (a, i) => {
+			if (!isNewNode(a)) return;
+
+			const title = a.innerText.replace(/\s+/g, " ").trim();
+			if (!isStableTitle(title)) return;
+
+			const container = a.closest("div, li");
+			const doi = extractDOI(container?.innerText);
+
+			return {
+				id: `ieee-${i}`,
+				node: a,
+				title,
+				doi,
+				key: cacheKey({ title, doi })
+			};
+		});
+
+	const collectItems = () => {
 		const host = location.hostname;
-		if (host.includes("scholar.google.com")) return collectScholarItems();
-		if (host.includes("webofscience")) return collectWebOfScienceItems();
-		if (host.includes("pubmed.ncbi.nlm.nih.gov")) return collectPubMedItems();
-		if (host.includes("arxiv.org")) return collectArxivItems();
+
+		if (host.includes("scholar.google.com")) return collectScholar();
+		if (host.includes("webofscience")) return collectWOS();
+		if (host.includes("pubmed")) return collectPubMed();
+		if (host.includes("arxiv")) return collectArxiv();
+		if (host.includes("sciencedirect")) return collectScienceDirect();
+		if (host.includes("springer")) return collectSpringer();
+		if (host.includes("ieee")) return collectIEEE();
 		return [];
-	}
+	};
 
 	/* =========================
-	 * Query Zotero (fixed)
+	 * ZOTERO CHECK
 	 * ========================= */
-	async function checkZotero(items) {
+	const checkZotero = async items => {
 		if (!items.length) return;
 
-		// instant visited highlight
-		if (location.hostname.includes("webofscience")) {
-			items.forEach(it => {
-				if (it.wosid && visitedWOS.has(it.wosid)) highlightVisitedWOS(it.node);
-			});
-		}
-
-		// instant cache highlight
+		// instant highlight
 		items.forEach(it => {
-			if (zoteroCache.get(it.key) === true) highlightZotero(it.node);
+			if (it.wosid && visitedWOS.has(it.wosid)) highlightVisitedWOS(it.node);
+			if (zoteroCache.get(it.key)) highlightZotero(it.node);
 		});
 
-		// filter: unknown AND not pending
 		const toQuery = items.filter(it => {
 			if (zoteroCache.has(it.key)) return false;
 			if (zoteroPending.has(it.key)) return false;
@@ -302,60 +316,70 @@
 
 		if (!toQuery.length) return;
 
-		const queries = toQuery.map(it => ({
-			id: it.id,
-			title: it.title,
-			doi: it.doi || undefined,
-		}));
-
 		let data;
 		try {
 			data = await postJSON(API, {
-				queries
+				queries: toQuery.map(it => ({
+					id: it.id,
+					title: it.title,
+					doi: it.doi || undefined
+				}))
 			});
 		} catch (e) {
-			console.warn("Zotero exists server error", e);
+			console.warn("Zotero API error", e);
 			toQuery.forEach(it => zoteroPending.delete(it.key));
 			return;
 		}
 
-		const existsMap = new Map((data.results || []).map(r => [r.id, !!r.exists]));
+		const map = new Map((data.results || []).map(r => [r.id, !!r.exists]));
 
 		toQuery.forEach(it => {
-			const exists = existsMap.get(it.id) === true;
+			const exists = map.get(it.id);
 			zoteroPending.delete(it.key);
 			zoteroCache.set(it.key, exists);
 			if (exists) highlightZotero(it.node);
 		});
-	}
+	};
 
 	/* =========================
-	 * WOS click tracking
+	 * SPA LOOP
 	 * ========================= */
-	function installWOSClickCapture() {
-		if (!location.hostname.includes("webofscience")) return;
+	let scanTimer = null;
+	let currentURL = location.href;
 
-		document.addEventListener("click", e => {
-			const a = e.target.closest?.('a[href*="/full-record/"]');
-			if (!a) return;
-			const id = extractWOSIDFromURL(a.href);
-			if (id) markVisitedWOS(id);
-		}, true);
-	}
+	const run = () => checkZotero(collectItems());
+
+	const startScanLoop = () => {
+		if (scanTimer) clearInterval(scanTimer);
+
+		const start = Date.now();
+
+		scanTimer = setInterval(() => {
+			if (Date.now() - start > SCAN_DURATION) {
+				clearInterval(scanTimer);
+				scanTimer = null;
+				return;
+			}
+			run();
+		}, SCAN_INTERVAL);
+	};
+
+	const watchURL = () => {
+		setInterval(() => {
+			if (location.href !== currentURL) {
+				currentURL = location.href;
+				startScanLoop();
+			}
+		}, 500);
+	};
+
+	/* =========================
+	 * INIT
+	 * ========================= */
 	installWOSClickCapture();
+	startScanLoop();
+	watchURL();
 
-	/* =========================
-	 * Run + observer
-	 * ========================= */
-	let lastRun = 0;
-	async function run() {
-		const now = Date.now();
-		if (now - lastRun < 800) return;
-		lastRun = now;
-		await checkZotero(collectItemsBySite());
-	}
-
-	run();
 	new MutationObserver(run).observe(document.body, {
 		childList: true,
 		subtree: true
