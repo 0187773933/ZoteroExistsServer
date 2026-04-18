@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zotero Saved + Visited Highlighter (Multi-Site)
 // @namespace    local.zotero.multi
-// @version      0.2.1
+// @version      0.3.0
 // @description  Highlight Zotero-saved items + track visited WOS (SPA-safe)
 // @match        https://scholar.google.com/*
 // @match        https://scholar.google.com/scholar_labs/search/session/*
@@ -14,8 +14,13 @@
 // @match        https://link-springer-com.ezproxy.libraries.wright.edu/search?*
 // @match        https://ieeexplore-ieee-org.ezproxy.libraries.wright.edu/search*
 // @match        https://ieeexplore.ieee.org/search*
+// @match        https://onlinelibrary-wiley-com.ezproxy.libraries.wright.edu/action/doSearch?*
+// @match        https://onlinelibrary.wiley.com/action/doSearch?*
+// @match        https://www-nature-com.ezproxy.libraries.wright.edu/search?*
+// @match        https://www.nature.com/search?*
 // @grant        GM.xmlHttpRequest
 // @connect      127.0.0.1
+// @run-at       document-idle
 // ==/UserScript==
 
 (() => {
@@ -34,6 +39,145 @@
 
 	const SCAN_INTERVAL = 700;
 	const SCAN_DURATION = 30000;
+
+	const PROCESSED_ATTR = "data-zh-processed";
+
+	/* =========================
+	 * UTIL
+	 * ========================= */
+	const normalizeTitle = t =>
+		(t || "")
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[\u2010-\u2015]/g, "-")
+			.replace(/[.:;!?]+$/g, "")
+			.replace(/[^\p{L}\p{N}]+/gu, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+
+	const cacheKey = ({ doi, title }) =>
+		doi ? `doi:${doi.toLowerCase()}` : `title:${normalizeTitle(title)}`;
+
+	const extractDOI = text =>
+		(text || "").match(/10\.\d{4,9}\/[^\s"<>]+/i)?.[0] || null;
+
+	const cleanText = el => {
+		if (!el) return "";
+		// innerText returns "" for not-yet-laid-out elements; textContent is the fallback
+		const raw = el.innerText || el.textContent || "";
+		return raw.replace(/\s+/g, " ").trim();
+	};
+
+	const isStableTitle = t =>
+		t && t.length > 10 && !t.endsWith("…");
+
+	/* =========================
+	 * SITE CONFIG
+	 *
+	 * Each entry describes how to extract items on a given site.
+	 *
+	 * Required:
+	 *   id          - short name; matched against hostname AND used as request prefix
+	 *   itemSelector- CSS selector for the container that represents one result
+	 *   titleNode   - (item) => the element to highlight and read title from
+	 *
+	 * Optional:
+	 *   stripTitle  - (raw) => cleaned title string (default: cleanText + leading tag strip)
+	 *   getDOI      - (item, titleNode) => doi string | null
+	 *   getKey      - (item, titleNode, {title, doi}) => cache key (default: cacheKey)
+	 *   requireStable - bool, enforce isStableTitle (default: true)
+	 *   extra       - (item, titleNode) => object merged into the entry (e.g. {wosid})
+	 * ========================= */
+
+	// default DOI lookup: scan the closest reasonable container's text
+	const defaultGetDOI = (item, _node) =>
+		extractDOI(item.innerText);
+
+	// default title: strip [PDF]/[HTML]/etc leading tag
+	const defaultStripTitle = raw =>
+		raw.replace(/^\[[^\]]+\]\s*/, "").trim();
+
+	const SITES = [
+		{
+			id: "scholar.google.com",
+			itemSelector: "div.gs_r",
+			titleNode: item => item.querySelector("h3.gs_rt"),
+			requireStable: false,
+		},
+		{
+			id: "webofscience",
+			itemSelector: 'a[data-ta="summary-record-title-link"]',
+			titleNode: item => item,
+			getDOI: (_item, node) => extractDOI(node.closest("app-summary-title")?.innerText),
+			requireStable: false,
+			extra: (_item, node) => {
+				const wosid = (node.href || "").match(/WOS:\w+/)?.[0] || null;
+				return { wosid };
+			},
+		},
+		{
+			id: "pubmed",
+			itemSelector: "a.docsum-title",
+			titleNode: item => item,
+			getDOI: () => null,
+		},
+		{
+			id: "arxiv",
+			itemSelector: "li.arxiv-result",
+			titleNode: item => item.querySelector("p.title"),
+			getKey: (item, _node, { title, doi }) => {
+				const arxivId = item.querySelector('a[href*="/abs/"]')
+					?.href.match(/\/abs\/([^?#]+)/)?.[1];
+				return arxivId ? `arxiv:${arxivId}` : cacheKey({ title, doi });
+			},
+		},
+		{
+			id: "sciencedirect",
+			itemSelector: 'a[href*="/science/article/pii/"]',
+			titleNode: item => item,
+			getDOI: (_item, node) => extractDOI(node.closest("li, div")?.innerText),
+		},
+		{
+			id: "springer",
+			itemSelector: "a.app-card-open__link",
+			titleNode: item => item,
+			getDOI: (_item, node) => extractDOI(node.closest("li, div, section")?.innerText),
+		},
+		{
+			id: "ieee",
+			itemSelector: "h3.text-md-md-lh a",
+			titleNode: item => item,
+			getDOI: (_item, node) => extractDOI(node.closest("div, li")?.innerText),
+		},
+		{
+			id: "wiley",
+			itemSelector: "h2.meta__title a.publication_title",
+			titleNode: item => item,
+			getDOI: (_item, node) => {
+				const container = node.closest("h2.meta__title");
+				// wiley hides a clean DOI in a sibling input
+				const hidden = container?.querySelector('input[type="hidden"]')?.value;
+				if (hidden) return hidden;
+				const href = node.getAttribute("href") || "";
+				return extractDOI(`${href} ${container?.innerText || ""}`);
+			},
+		},
+		{
+			id: "nature.com",
+			itemSelector: "h3.c-card__title a.c-card__link",
+			titleNode: item => item,
+			getDOI: (_item, node) => {
+				const container = node.closest("div, li, article");
+				const href = node.getAttribute("href") || "";
+				return extractDOI(`${href} ${container?.innerText || ""}`);
+			},
+		},
+	];
+
+	// ezproxy rewrites "www.nature.com" -> "www-nature-com.ezproxy...", so normalize
+	// dashes to dots before matching site ids.
+	const normalizedHost = location.hostname.replace(/-/g, ".");
+	const activeSite = SITES.find(s => normalizedHost.includes(s.id)) || null;
 
 	/* =========================
 	 * HTTP
@@ -58,7 +202,7 @@
 					try { resolve(JSON.parse(r.responseText)); }
 					catch (e) { reject(e); }
 				},
-				onerror: reject
+				onerror: reject,
 			});
 		});
 
@@ -67,35 +211,6 @@
 	 * ========================= */
 	const zoteroCache = new Map();
 	const zoteroPending = new Set();
-	const seenNodes = new WeakSet();
-
-	/* =========================
-	 * UTIL
-	 * ========================= */
-	const normalizeTitle = t =>
-		(t || "")
-			.toLowerCase()
-			.normalize("NFKD")
-			.replace(/[\u2010-\u2015]/g, "-")
-			.replace(/[.:;!?]+$/g, "")
-			.replace(/[^\p{L}\p{N}]+/gu, " ")
-			.replace(/\s+/g, " ")
-			.trim();
-
-	const cacheKey = ({ doi, title }) =>
-		doi ? `doi:${doi.toLowerCase()}` : `title:${normalizeTitle(title)}`;
-
-	const extractDOI = text =>
-		(text || "").match(/10\.\d{4,9}\/[^\s"<>]+/i)?.[0] || null;
-
-	const isStableTitle = t =>
-		t && t.length > 10 && !t.endsWith("…");
-
-	const isNewNode = node => {
-		if (seenNodes.has(node)) return false;
-		seenNodes.add(node);
-		return true;
-	};
 
 	/* =========================
 	 * HIGHLIGHT
@@ -115,7 +230,7 @@
 	};
 
 	/* =========================
-	 * WOS VISITED
+	 * WOS VISITED TRACKING
 	 * ========================= */
 	const getVisitedWOS = () => {
 		try { return new Set(JSON.parse(localStorage.getItem(WOS_VISITED_KEY) || "[]")); }
@@ -127,9 +242,6 @@
 
 	const visitedWOS = getVisitedWOS();
 
-	const extractWOSID = url =>
-		(url || "").match(/WOS:\w+/)?.[0] || null;
-
 	const markVisitedWOS = id => {
 		if (!id || visitedWOS.has(id)) return;
 		visitedWOS.add(id);
@@ -137,162 +249,70 @@
 	};
 
 	const installWOSClickCapture = () => {
-		if (!location.hostname.includes("webofscience")) return;
+		if (activeSite?.id !== "webofscience") return;
 
 		document.addEventListener("click", e => {
 			const a = e.target.closest?.('a[href*="/full-record/"]');
-			const id = extractWOSID(a?.href);
+			const id = (a?.href || "").match(/WOS:\w+/)?.[0];
 			if (id) markVisitedWOS(id);
 		}, true);
 	};
 
 	/* =========================
-	 * COLLECTORS
+	 * COLLECTION
+	 *
+	 * The key change vs v0.2.x: we no longer use a WeakSet of "seen" nodes that
+	 * could get stamped during a transient render. Instead we mark a DOM attribute
+	 * only AFTER we've successfully extracted a stable title. Unstable/early reads
+	 * are retried on the next scan tick.
 	 * ========================= */
-	const collect = (selector, mapFn) =>
-		[...document.querySelectorAll(selector)].map(mapFn).filter(Boolean);
+	const collectItems = () => {
+		if (!activeSite) return [];
 
-	const collectScholar = () =>
-		collect("div.gs_r", (card, i) => {
-			const h = card.querySelector("h3.gs_rt");
-			if (!h || !isNewNode(h)) return;
+		const {
+			id: siteId,
+			itemSelector,
+			titleNode,
+			stripTitle = defaultStripTitle,
+			getDOI = defaultGetDOI,
+			getKey,
+			requireStable = true,
+			extra,
+		} = activeSite;
 
-			let title = h.innerText.trim().replace(/^\[[^\]]+\]\s*/, "");
+		const items = [...document.querySelectorAll(itemSelector)];
+		const out = [];
+
+		items.forEach((item, i) => {
+			if (item.hasAttribute(PROCESSED_ATTR)) return;
+
+			const node = titleNode(item);
+			if (!node) return;
+
+			const rawTitle = cleanText(node);
+			const title = stripTitle(rawTitle);
 			if (!title) return;
+			if (requireStable && !isStableTitle(title)) return;
 
-			const doi = extractDOI(card.innerText);
+			const doi = getDOI(item, node) || null;
+			const base = { title, doi };
+			const key = getKey ? getKey(item, node, base) : cacheKey(base);
+			const extras = extra ? extra(item, node) : {};
 
-			return {
-				id: `gs-${i}`,
-				node: h,
-				title,
-				doi,
-				key: cacheKey({ title, doi })
-			};
-		});
+			// only stamp when we got a stable read
+			item.setAttribute(PROCESSED_ATTR, "1");
 
-	const collectWOS = () =>
-		collect('a[data-ta="summary-record-title-link"]', (a, i) => {
-			if (!isNewNode(a)) return;
-
-			const title = a.innerText.trim();
-			if (!title) return;
-
-			const doi = extractDOI(a.closest("app-summary-title")?.innerText);
-			const wosid = extractWOSID(a.href);
-
-			return {
-				id: `wos-${i}`,
-				node: a,
-				title,
-				doi,
-				key: cacheKey({ title, doi }),
-				wosid
-			};
-		});
-
-	const collectPubMed = () =>
-		collect("a.docsum-title", (a, i) => {
-			if (!isNewNode(a)) return;
-
-			const title = a.innerText.replace(/\s+/g, " ").trim();
-			if (!isStableTitle(title)) return;
-
-			return {
-				id: `pm-${i}`,
-				node: a,
-				title,
-				doi: null,
-				key: cacheKey({ title })
-			};
-		});
-
-	const collectArxiv = () =>
-		collect("li.arxiv-result", (li, i) => {
-			const node = li.querySelector("p.title");
-			if (!node || !isNewNode(node)) return;
-
-			const title = node.innerText.replace(/\s+/g, " ").trim();
-			if (!isStableTitle(title)) return;
-
-			const id = li.querySelector('a[href*="/abs/"]')?.href.match(/\/abs\/([^?#]+)/)?.[1];
-			const doi = extractDOI(li.innerText);
-
-			return {
-				id: `arxiv-${id || i}`,
+			out.push({
+				id: `${siteId}-${i}`,
 				node,
 				title,
 				doi,
-				key: id ? `arxiv:${id}` : cacheKey({ title, doi })
-			};
+				key,
+				...extras,
+			});
 		});
 
-	const collectScienceDirect = () =>
-		collect('a[href*="/science/article/pii/"]', (a, i) => {
-			if (!isNewNode(a)) return;
-
-			const title = a.innerText.replace(/\s+/g, " ").trim();
-			if (!isStableTitle(title)) return;
-
-			const doi = extractDOI(a.closest("li, div")?.innerText);
-
-			return {
-				id: `sd-${i}`,
-				node: a,
-				title,
-				doi,
-				key: cacheKey({ title, doi })
-			};
-		});
-
-	const collectSpringer = () =>
-		collect("a.app-card-open__link", (a, i) => {
-			if (!isNewNode(a)) return;
-
-			const title = a.innerText.replace(/\s+/g, " ").trim();
-			if (!isStableTitle(title)) return;
-
-			const doi = extractDOI(a.closest("li, div, section")?.innerText);
-
-			return {
-				id: `springer-${i}`,
-				node: a,
-				title,
-				doi,
-				key: cacheKey({ title, doi })
-			};
-		});
-
-	const collectIEEE = () =>
-		collect("h3.text-md-md-lh a", (a, i) => {
-			if (!isNewNode(a)) return;
-
-			const title = a.innerText.replace(/\s+/g, " ").trim();
-			if (!isStableTitle(title)) return;
-
-			const container = a.closest("div, li");
-			const doi = extractDOI(container?.innerText);
-
-			return {
-				id: `ieee-${i}`,
-				node: a,
-				title,
-				doi,
-				key: cacheKey({ title, doi })
-			};
-		});
-
-	const collectItems = () => {
-		const host = location.hostname;
-
-		if (host.includes("scholar.google.com")) return collectScholar();
-		if (host.includes("webofscience")) return collectWOS();
-		if (host.includes("pubmed")) return collectPubMed();
-		if (host.includes("arxiv")) return collectArxiv();
-		if (host.includes("sciencedirect")) return collectScienceDirect();
-		if (host.includes("springer")) return collectSpringer();
-		if (host.includes("ieee")) return collectIEEE();
-		return [];
+		return out;
 	};
 
 	/* =========================
@@ -301,7 +321,7 @@
 	const checkZotero = async items => {
 		if (!items.length) return;
 
-		// instant highlight
+		// instant paint from local state
 		items.forEach(it => {
 			if (it.wosid && visitedWOS.has(it.wosid)) highlightVisitedWOS(it.node);
 			if (zoteroCache.get(it.key)) highlightZotero(it.node);
@@ -322,8 +342,8 @@
 				queries: toQuery.map(it => ({
 					id: it.id,
 					title: it.title,
-					doi: it.doi || undefined
-				}))
+					doi: it.doi || undefined,
+				})),
 			});
 		} catch (e) {
 			console.warn("Zotero API error", e);
@@ -331,10 +351,10 @@
 			return;
 		}
 
-		const map = new Map((data.results || []).map(r => [r.id, !!r.exists]));
+		const resultMap = new Map((data.results || []).map(r => [r.id, !!r.exists]));
 
 		toQuery.forEach(it => {
-			const exists = map.get(it.id);
+			const exists = resultMap.get(it.id);
 			zoteroPending.delete(it.key);
 			zoteroCache.set(it.key, exists);
 			if (exists) highlightZotero(it.node);
@@ -376,13 +396,20 @@
 	/* =========================
 	 * INIT
 	 * ========================= */
+	if (!activeSite) {
+		console.warn("ZOTERO HIGHLIGHTER: no site config matched", location.hostname);
+		return;
+	}
+
+	console.log("ZOTERO HIGHLIGHTER: site =", activeSite.id);
+
 	installWOSClickCapture();
 	startScanLoop();
 	watchURL();
 
 	new MutationObserver(run).observe(document.body, {
 		childList: true,
-		subtree: true
+		subtree: true,
 	});
 
 })();
