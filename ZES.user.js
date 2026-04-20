@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zotero Saved + Visited Highlighter (Multi-Site)
 // @namespace    local.zotero.multi
-// @version      0.3.0
+// @version      0.4.0
 // @description  Highlight Zotero-saved items + track visited WOS (SPA-safe)
 // @match        https://scholar.google.com/*
 // @match        https://scholar.google.com/scholar_labs/search/session/*
@@ -18,6 +18,8 @@
 // @match        https://onlinelibrary.wiley.com/action/doSearch?*
 // @match        https://www-nature-com.ezproxy.libraries.wright.edu/search?*
 // @match        https://www.nature.com/search?*
+// @match        https://www.cell.com/action/doSearch?*
+// @match        https://www-cell-com.ezproxy.libraries.wright.edu/action/doSearch?*
 // @grant        GM.xmlHttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -172,6 +174,16 @@
 				return extractDOI(`${href} ${container?.innerText || ""}`);
 			},
 		},
+        {
+            id: "cell.com",
+            itemSelector: "span.hlFld-Title h2.meta__title a",
+            titleNode: item => item,
+            getDOI: (_item, node) => {
+                const container = node.closest("span.hlFld-Title, h2.meta__title, li, div, article");
+                const href = node.getAttribute("href") || "";
+                return extractDOI(`${href} ${container?.innerText || ""}`);
+            },
+        },
 	];
 
 	// ezproxy rewrites "www.nature.com" -> "www-nature-com.ezproxy...", so normalize
