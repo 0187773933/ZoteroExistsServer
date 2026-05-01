@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zotero Saved + Visited Highlighter (Multi-Site)
 // @namespace    local.zotero.multi
-// @version      0.4.0
+// @version      0.4.1
 // @description  Highlight Zotero-saved items + track visited WOS (SPA-safe)
 // @match        https://scholar.google.com/*
 // @match        https://scholar.google.com/scholar_labs/search/session/*
@@ -20,6 +20,7 @@
 // @match        https://www.nature.com/search?*
 // @match        https://www.cell.com/action/doSearch?*
 // @match        https://www-cell-com.ezproxy.libraries.wright.edu/action/doSearch?*
+// @match        https://zenodo.org/search?*
 // @grant        GM.xmlHttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -164,6 +165,20 @@
 				return extractDOI(`${href} ${container?.innerText || ""}`);
 			},
 		},
+        {
+            id: "zenodo.org",
+            itemSelector: "h2.header a",
+            titleNode: item => item,
+            getDOI: (_item, node) => {
+                const container = node.closest("h2, li, div, article");
+                const href = node.getAttribute("href") || "";
+                const doiFromText = extractDOI(container?.innerText || "");
+                if (doiFromText) return doiFromText;
+                const recId = href.match(/\/records\/(\d+)/)?.[1];
+                if (recId) return `10.5281/zenodo.${recId}`;
+                return null;
+            },
+        },
 		{
 			id: "nature.com",
 			itemSelector: "h3.c-card__title a.c-card__link",
